@@ -20,7 +20,7 @@ setup(
 
 	# Application author details:
 	author="Tamas Jos",
-	author_email="info@skelsecprojects.com",
+	author_email="info@octopwn.com",
 
 	# Packages
 	packages=find_packages(exclude=["tests*"]),

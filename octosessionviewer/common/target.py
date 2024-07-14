@@ -1,7 +1,7 @@
 from typing import List
 
 class Target:
-	def __init__(self, ip:str, hostname:str = None, ports:List[int] = None, dcip:str = None, realm:str = None, hidden:bool = False, isdc:bool=False, sid:str=None, source:str=None, description:str = None, samaccountname:str = None, ostype:str=None, osver:str=None, uac:int=None, checksum:str = None):
+	def __init__(self, ip:str, hostname:str = None, ports:List[int] = None, dcip:str = None, realm:str = None, hidden:bool = False, isdc:bool=False, sid:str=None, source:str=None, description:str = None, samaccountname:str = None, ostype:str=None, osver:str=None, uac:int=None, groups:List[str] = None, checksum:str = None):
 		self.hostname = hostname
 		self.ip = ip
 		self.ports = ports
@@ -18,6 +18,13 @@ class Target:
 		self.source = source
 		self.dns = None # TODO
 		self.checksum = checksum # this is for filtering out duplicates
+		self.groups = groups
+
+		if self.groups is None:
+			self.groups = []
+
+		if self.ports is None:
+			self.ports = []
 	
 	def __str__(self):
 		t = ''
