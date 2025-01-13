@@ -1,4 +1,13 @@
-
+class ClientConsoleBase:
+	def __init__(self, projectid, majortype, subtype, client_id:int, connection, cmd_q, msg_queue, prompt, octopwnobj, params, history, command_modifier = None):
+		self.projectid = projectid
+		self.majortype = majortype
+		self.subtype = subtype
+		self.params = params
+		self.history = history
+		self.prompt = prompt
+		self.octopwnobj = octopwnobj
+		self.command_modifier = command_modifier
 
 class ClientConfigBase:
 	def __init__(self, config_type:str, clientname:str, completer, description = None, settings = None):

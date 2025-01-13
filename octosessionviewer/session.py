@@ -11,11 +11,9 @@ import os
 from octosessionviewer.common.target import Target
 from octosessionviewer.common.credential import Credential
 from octosessionviewer.common.proxy import Proxy, ProxyChain
-from octosessionviewer.common.clientconfig import ClientConfigBase, ClientConfig, \
-	ScannerConfig, ServerConfig, UtilsConfig
+from octosessionviewer.common.clientconfig import ClientConfigBase, ClientConsoleBase
 
-
-import toml
+import json
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -25,26 +23,29 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 class OctoSessionViewer:
 	def __init__(self, key:str=None):
-		self.__rawdict = None
 		self.__session_file_password = key
 		if self.__session_file_password is None:
 			self.__session_file_password = 'OCTOPWN_DEMO_MODE'
+		self.projectid:str = None
 		self.dcip:str = None
 		self.realm:str = None
 		self.resolver:int = None
+		self.screensettings:Dict[str, str] = {}
 		self.credentials:Dict[int, Credential] = {}
 		self.targets:Dict[int, Target] = {}
 		self.proxies:Dict[int, Proxy] = {}
-		self.clients:Dict[int, Tuple[ClientConfigBase, object]] = {}
+		self.sessions:Dict[int, Tuple[ClientConfigBase, ClientConsoleBase]] = {}
 		self.work_dir:str = None
-		self.workfiles:zipfile.ZipFile = None
-		self.consolemessages:Dict[int, List[Tuple[str, str]]] = {}
+		self.messagebuffers:Dict[int, str] = {}
+		self.workfiles:Dict[str, str] = {}
 
-	def to_toml(self):
-		return toml.dumps(self.__rawdict)
+	@staticmethod
+	def from_json(data:str):
+		return OctoSessionViewer.from_dict(json.loads(data))
 	
-	def to_json(self):
-		return json.dumps(self.__rawdict)
+	@staticmethod
+	def from_json_f(fileh:io.IOBase):
+		return OctoSessionViewer.from_dict(json.load(fileh))
 	
 	def extract_workdir(self, outdir:str):
 		if outdir is None:
@@ -54,10 +55,6 @@ class OctoSessionViewer:
 		if not os.path.exists(outdir):
 			os.mkdir(outdir)
 		self.workfiles.extractall(outdir)
-	
-	@staticmethod
-	def from_toml(data:str):
-		return OctoSessionViewer.from_dict(toml.loads(data))
 
 	@staticmethod
 	def from_file(filepath:str|Path, key:str=None):
@@ -65,7 +62,7 @@ class OctoSessionViewer:
 		with open(filepath, 'rb') as f:
 			decdata = session.decrypt_session_file(f)
 			decdata = gzip.decompress(decdata.read())
-			return OctoSessionViewer.from_toml(decdata.decode())
+			return OctoSessionViewer.from_json(decdata.decode())
 
 
 	def decrypt_session_file(self, session_file_data:bytes|io.BytesIO):
@@ -73,6 +70,7 @@ class OctoSessionViewer:
 			if len(session_file_data) <= 28:
 				raise Exception('Session file data too small!')
 			session_file_data = io.BytesIO(session_file_data)
+		version = session_file_data.read(4)
 		salt = session_file_data.read(16)
 		nonce = session_file_data.read(12)
 		tag = session_file_data.read(16)
@@ -102,12 +100,17 @@ class OctoSessionViewer:
 	@staticmethod
 	def from_dict(d:dict):
 		res = OctoSessionViewer()
-		res.__rawdict = d
 		res.work_dir = None
+		res.projectid = d.get('projectid')
 		res.dcip = d.get('dcip')
 		res.realm = d.get('realm')
 		res.resolver = d.get('resolver')
 		res.work_dir = d.get('work_dir', None)
+		if 'screensettings' in d:
+			try:
+				res.screensettings = json.loads(d['screensettings'])
+			except:
+				pass
 		
 		res.credentials = {}
 		if 'credentials' in d:
@@ -127,42 +130,30 @@ class OctoSessionViewer:
 				else:
 					res.proxies[int(tid)] = Proxy.from_dict(d['proxies'][tid])
 		
-		res.clients = {}
-		if 'clients' in d:
-			for tid in d['clients']:
-				client_config = d['clients'][tid]['config']
-				if client_config is not None:
-					if client_config['config_type'].upper() == 'NORMAL':
-						client_config = ClientConfig.from_dict(client_config)
-					elif client_config['config_type'].upper() == 'SCANNER':
-						client_config = ScannerConfig.from_dict(client_config)
-					elif client_config['config_type'].upper() == 'SERVER':
-						client_config = ServerConfig.from_dict(client_config)
-					elif client_config['config_type'].upper() == 'UTILS':
-						client_config = UtilsConfig.from_dict(client_config)
-				
-				client = None
-				if 'client' in d['clients'][tid]:
-					client = d['clients'][tid]['client']
-				res.clients[str(tid)] = (client_config, client)
+		res.sessions = {}
+		if 'sessions' in d:
+			for tid in d['sessions']:
+				client_config = d['sessions'][tid]['config']
+				res.sessions[str(tid)] = client_config
+
+		res.messagebuffers = {}
+		if 'messagebuffers' in d:
+			for tid in d['messagebuffers']:
+				res.messagebuffers[int(tid)] = []
+				try:
+					for timestamp, msg in d['messagebuffers'][tid]:
+						buffer = base64.b64decode(msg).decode('utf-8')
+						res.messagebuffers[int(tid)].append([timestamp, buffer])
+				except:
+					# old format
+					for msg in base64.b64decode(d['messagebuffers'][tid]).split(b'\r\n'):
+						res.messagebuffers[int(tid)].append(['??????', msg.decode()])
 
 		if 'workfiles' in d:
 			if 'workdir.zip' in d['workfiles']:
 				zipbuffer = io.BytesIO(base64.b64decode(d['workfiles']['workdir.zip']))
-				res.workfiles = zipfile.ZipFile(zipbuffer, 'r')
-		
-		if 'messagebuffers' in d:
-			for tid in d['messagebuffers']:
-				res.consolemessages[int(tid)] = []
-				try:
-					for timestamp, msg in d['messagebuffers'][tid]:
-						buffer = base64.b64decode(msg).decode('utf-8')
-						res.consolemessages[int(tid)].append([timestamp, buffer])
-				except:
-					# old format
-					for msg in base64.b64decode(d['messagebuffers'][tid]).split(b'\r\n'):
-						res.consolemessages[int(tid)].append(['??????', msg.decode()])
-
+				with zipfile.ZipFile(zipbuffer, 'r') as zipf:
+					zipf.extractall(res.work_dir)
 		return res
 	
 	def __str__(self):
@@ -180,20 +171,22 @@ class OctoSessionViewer:
 		t += 'Proxies:\r\n'
 		for proxy in self.proxies.values():
 			t += str(proxy)
-		t += 'Clients:\r\n'
-		for client in self.clients.values():
-			t += str(client[0])
+		t += 'Sessions:\r\n'
+		for session in self.sessions.values():
+			t += str(session)
 		
 		t += 'Console Messages:\r\n'
-		for tid in self.consolemessages:
+		for tid in self.messagebuffers:
 			t += '\tClient %s:\r\n' % tid
-			for timestamp, msg in self.consolemessages[tid]:
+			for timestamp, msg in self.messagebuffers[tid]:
 				t += '\t\tTimestamp: %s\r\n' % timestamp
 				t += '\t\tMessage:\r\n%s\r\n' % msg
 		
-		if self.workfiles is not None:
+		if self.workfiles is not None and 'workdir.zip' in self.workfiles:
 			t += 'Workfiles:\r\n'
-			t += zip_tree(self.workfiles)
+			zipbuffer = io.BytesIO(base64.b64decode(d['workfiles']['workdir.zip']))
+			with zipfile.ZipFile(zipbuffer, 'r') as zipf:
+				t += zip_tree(zipf)
 		return t
 
 
